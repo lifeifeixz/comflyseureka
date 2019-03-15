@@ -1,62 +1,47 @@
-/*
- * Copyright (c) 2018, 2018, Travel and/or its affiliates. All rights reserved.
- * TRAVEL PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- */
 package interview.futurecar.q2;
 
 
-import com.alibaba.fastjson.JSONObject;
-
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
 
-/**
- * @author flysLi
- * @ClassName SalaryApp
- * @Decription TODO
- * @Date 2019/2/20 16:48
- * @Version 1.0
- */
+@SuppressWarnings("All")
 public class SalaryApp {
     private static final int count = 10000000;
+    private List<Salary> salaries;
 
     public static void main(String[] args) throws IOException {
-
-        long startTime = System.currentTimeMillis();
+        long start = System.currentTimeMillis();
         String path = "D:\\salary.txt";
         SalaryApp app = new SalaryApp();
-        //写出文件
-        app.writerData(path);
-        //读取
-        Salary[] salaries = app.convertToSalarys(path);
+
+        /*写文件*/
+        app.writer(path);
+
+        /*读文件*/
+        String txt = app.read(path);
+
+        /*转换成Salary集合*/
+        Salary[] salaries = app.concurrentConvertToSalarys(txt);
+
+        /*分组(根据名称的前两个字母)*/
         Map<String, List<Salary>> listMap = app.groupByPetName(salaries);
+
+        /*累加每组的年薪、人数*/
         List<TempSalary> tempSalaries = app.sumOfGroup(listMap);
+
+        /*排序*/
         app.sort(tempSalaries);
+
+        /*输出前十*/
         for (int i = 0; i < 10; i++) {
-            System.out.println(tempSalaries.get(i).toString());
+            TempSalary tempSalary = tempSalaries.get(i);
+            System.out.println(tempSalary.getPetName()
+                    + "," + tempSalary.getYearSalary()
+                    + "万," + tempSalary.getNumber() + "人");
         }
-        long endTime = System.currentTimeMillis();
-        System.out.println((endTime - startTime) / 1000);
+        long end = System.currentTimeMillis();
+        System.out.println("共计耗时:" + (end - start) / 1000 + "秒");
     }
 
     /**
@@ -64,8 +49,7 @@ public class SalaryApp {
      *
      * @param path 文件地址
      */
-    public void writerData(String path) {
-        long s = System.currentTimeMillis();
+    public void writer(String path) {
         FileWriter out = null;
         try {
             File file = new File(path);
@@ -73,17 +57,16 @@ public class SalaryApp {
                 file.createNewFile();
             }
             out = new FileWriter(file, true);
+            StringBuffer str = new StringBuffer(10);
             for (int i = 0; i < count; i++) {
-                StringBuffer str = new StringBuffer();
                 str.append(randomName());
                 str.append(",");
                 str.append(new Random().nextInt(100));
                 str.append(",");
                 str.append(new Random().nextInt(5));
                 str.append("\n");
-                out.write(str.toString());
             }
-
+            out.write(str.toString());
         } catch (FileNotFoundException e) {
             e.printStackTrace();
         } catch (IOException e) {
@@ -95,8 +78,6 @@ public class SalaryApp {
                 e.printStackTrace();
             }
         }
-        long e = System.currentTimeMillis();
-        System.out.println("写出文件耗时:" + (e - s) / 1000);
     }
 
     /**
@@ -111,40 +92,47 @@ public class SalaryApp {
     }
 
     /**
+     * 读取文本
+     *
+     * @param path
+     * @return
+     */
+    public String read(String path) {
+        String txt = null;
+        try {
+            FileInputStream fis = new FileInputStream(path);
+            byte[] data = new byte[fis.available()];
+            fis.read(data);
+            txt = new String(data, 0, data.length);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return txt;
+    }
+
+    /**
      * 将数据转换成对象
      *
      * @param row 一行数据
      * @return
      */
     public Salary convertToSalary(String row) {
-        if (row != null) {
-            String[] arr = row.split(",");
-            String name = arr[0];
-            //由于名字都控制到了4位以上，所以不用担心下标越界的问题
-            String petName = name.substring(0, 2);
-            return new Salary(name, petName, Double.valueOf(arr[1]), Double.valueOf(arr[2]));
-        }
-        return null;
-    }
-
-    /**
-     * 将文本转换成集合
-     *
-     * @param text
-     * @return
-     */
-    public List<Salary> convertToSalarysForTxt(String text) {
-        return null;
-    }
-
-    public String readTxt(String path) {
-        try {
-            FileInputStream fis = new FileInputStream(path);
-            byte[] data = new byte[fis.available()];
-            fis.read(data);
-            return new String(data, 0, data.length);
-        } catch (IOException e) {
-            e.printStackTrace();
+        if (row != null && row.trim().length() > 0) {
+            Salary salary = new Salary();
+            StringTokenizer tokenizer = new StringTokenizer(row, ",");
+            int i = 0;
+            while (tokenizer.hasMoreTokens()) {
+                String token = tokenizer.nextToken();
+                if (i == 0) {
+                    salary.setName(token);
+                } else if (i == 1) {
+                    salary.setBaseSalary(Integer.valueOf(token));
+                } else {
+                    salary.setBonus(Integer.valueOf(token));
+                }
+                i++;
+            }
+            return salary;
         }
         return null;
     }
@@ -155,48 +143,52 @@ public class SalaryApp {
      * @param path
      * @return
      */
-    public Salary[] convertToSalarys(String path) {
+    public Salary[] convertToSalarys(String txt) {
         //读取
-        String txt = readTxt(path);
         String[] rows = txt.split("\n");
-        long listS = System.currentTimeMillis();
         Salary[] salaries = new Salary[rows.length];
         for (int i = 0; i < rows.length; i++) {
             salaries[i] = convertToSalary(rows[i]);
         }
-        long ListE = System.currentTimeMillis();
-        System.out.println("集合迭代时间:" + (ListE - listS) / 1000);
         return salaries;
     }
 
+    /**
+     * 并发获取列表
+     *
+     * @param path
+     * @return
+     */
+    public Salary[] concurrentConvertToSalarys(String txt) {
+        String[] rows = txt.split("\n");
+        Salary[] salaries = new Salary[rows.length];
+        int threadNumber = 10;
+        final CountDownLatch countDownLatch = new CountDownLatch(threadNumber);
+        int j = 0;
+        for (; j < threadNumber; j++) {
+            int finalJ = j;
+            new Thread(() -> {
+                int s = 0;
+                for (int i = 0; i < (rows.length / threadNumber); i++) {
+                    int index = i + (finalJ * (rows.length / threadNumber));
+                    salaries[index] = convertToSalary(rows[index]);
+                }
+                countDownLatch.countDown();
+            }).start();
+        }
+        try {
+            countDownLatch.await();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        return salaries;
+    }
 
     /**
-     * 声明name
+     * 随机生成姓名
      *
      * @return
      */
-    public static String generateName() {
-        String[] strs = new String[]{
-                "a", "b", "c", "d",
-                "e", "f", "g", "h",
-                "i", "n", "j", "k",
-                "l", "m", "n", "o",
-                "p", "q", "r", "s",
-                "t", "u", "v", "w",
-                "x", "y", "z",
-        };
-        int random1 = new Random().nextInt(25) + 1;
-        int random2 = new Random().nextInt(25) + 1;
-        int random3 = new Random().nextInt(25) + 1;
-        int random4 = new Random().nextInt(25) + 1;
-        StringBuffer stringBuffer = new StringBuffer();
-        stringBuffer.append(strs[random1]);
-        stringBuffer.append(strs[random2]);
-        stringBuffer.append(strs[random3]);
-        stringBuffer.append(strs[random4]);
-        return stringBuffer.toString();
-    }
-
     public String randomName() {
         StringBuilder name = new StringBuilder(4);
         String chars = "abcdefghijklmnopqrstuvwxyz";
@@ -215,13 +207,15 @@ public class SalaryApp {
     public Map<String, List<Salary>> groupByPetName(Salary[] salaries) {
         Map<String, List<Salary>> petNameMap = new HashMap<>(10000);
         for (Salary salary : salaries) {
-            String petName = salary.getPetName();
-            if (petNameMap.containsKey(petName)) {
-                petNameMap.get(petName).add(salary);
-            } else {
-                ArrayList<Salary> var1 = new ArrayList<>();
-                var1.add(salary);
-                petNameMap.put(petName, var1);
+            if (salary != null) {
+                String petName = salary.getName().substring(0, 2);
+                if (petNameMap.containsKey(petName)) {
+                    petNameMap.get(petName).add(salary);
+                } else {
+                    ArrayList<Salary> var1 = new ArrayList<>();
+                    var1.add(salary);
+                    petNameMap.put(petName, var1);
+                }
             }
         }
         return petNameMap;
@@ -237,7 +231,7 @@ public class SalaryApp {
         List<TempSalary> tempSalaries = new ArrayList<>(10000);
         for (String key : keys) {
             List<Salary> salaries = stringListMap.get(key);
-            double yearSalarySum = cumulativeTempSalary(salaries);
+            Integer yearSalarySum = cumulativeTempSalary(salaries);
             tempSalaries.add(new TempSalary(key, yearSalarySum, salaries.size()));
         }
         return tempSalaries;
@@ -249,8 +243,8 @@ public class SalaryApp {
      * @param salaryList
      * @return
      */
-    public double cumulativeTempSalary(List<Salary> salaryList) {
-        double yearSalary = 0;
+    public Integer cumulativeTempSalary(List<Salary> salaryList) {
+        Integer yearSalary = 0;
         for (Salary salary : salaryList) {
             yearSalary += (salary.getBaseSalary() * 13 + salary.getBonus());
 
@@ -264,10 +258,10 @@ public class SalaryApp {
  */
 class TempSalary {
     private String petName;
-    private Double yearSalary;
+    private Integer yearSalary;
     private int number;
 
-    public TempSalary(String petName, Double yearSalary, int number) {
+    public TempSalary(String petName, Integer yearSalary, int number) {
         this.petName = petName;
         this.yearSalary = yearSalary;
         this.number = number;
@@ -281,11 +275,11 @@ class TempSalary {
         this.petName = petName;
     }
 
-    public Double getYearSalary() {
+    public Integer getYearSalary() {
         return yearSalary;
     }
 
-    public void setYearSalary(Double yearSalary) {
+    public void setYearSalary(Integer yearSalary) {
         this.yearSalary = yearSalary;
     }
 
@@ -312,36 +306,16 @@ class TempSalary {
  */
 class Salary {
     private String name;
-
-    /**
-     * 名字前两位
-     **/
-    private String petName;
-    private double baseSalary;
-    private double bonus;
+    private Integer baseSalary;
+    private Integer bonus;
 
     public Salary() {
     }
 
-    public Salary(String name, double baseSalary, double bonus) {
+    public Salary(String name, Integer baseSalary, Integer bonus) {
         this.name = name;
         this.baseSalary = baseSalary;
         this.bonus = bonus;
-    }
-
-    public Salary(String name, String petName, double baseSalary, double bonus) {
-        this.name = name;
-        this.petName = petName;
-        this.baseSalary = baseSalary;
-        this.bonus = bonus;
-    }
-
-    public String getPetName() {
-        return petName;
-    }
-
-    public void setPetName(String petName) {
-        this.petName = petName;
     }
 
     public String getName() {
@@ -352,21 +326,19 @@ class Salary {
         this.name = name;
     }
 
-    public double getBaseSalary() {
+    public Integer getBaseSalary() {
         return baseSalary;
     }
 
-    public void setBaseSalary(double baseSalary) {
+    public void setBaseSalary(Integer baseSalary) {
         this.baseSalary = baseSalary;
     }
 
-    public double getBonus() {
+    public Integer getBonus() {
         return bonus;
     }
 
-    public void setBonus(double bonus) {
+    public void setBonus(Integer bonus) {
         this.bonus = bonus;
     }
 }
-
-
